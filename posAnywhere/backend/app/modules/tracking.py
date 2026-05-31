@@ -8,6 +8,8 @@ possession of the unguessable tracking token.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.realtime import manager, order_channel
 from app.schemas import StatusEventOut, TrackingView
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"])
+logger = logging.getLogger(__name__)
 
 
 def _load_order_by_token(db: Session, token: str) -> Order:
@@ -56,6 +59,7 @@ async def tracking_ws(websocket: WebSocket, token: str) -> None:
 
     channel = order_channel(token)
     await manager.connect(channel, websocket)
+    logger.info("ws.connect channel=tracking order_id=%s", order.id)
     try:
         # Push the current state immediately so the page renders without delay.
         await websocket.send_json(initial)
@@ -66,3 +70,4 @@ async def tracking_ws(websocket: WebSocket, token: str) -> None:
         pass
     finally:
         await manager.disconnect(channel, websocket)
+        logger.info("ws.disconnect channel=tracking order_id=%s", order.id)

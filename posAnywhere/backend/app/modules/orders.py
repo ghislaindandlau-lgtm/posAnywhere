@@ -8,6 +8,7 @@ driver's capacity).
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -28,6 +29,7 @@ from app.models import (
 from app.schemas import OrderCreate, OrderOut
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+logger = logging.getLogger(__name__)
 
 
 def _get_or_create_customer(db: Session, payload: OrderCreate) -> Customer:
@@ -93,6 +95,15 @@ async def create_order(payload: OrderCreate, db: Session = Depends(get_db)) -> O
     db.commit()
     db.refresh(order)
 
+    logger.info(
+        "order.created id=%s location=%s channel=%s zone=%s total=%.2f eta=%s",
+        order.id,
+        location.id,
+        order.channel.value,
+        order.zone_id,
+        order.total,
+        order.eta_minutes,
+    )
     await publish_order_update(order)
     return order
 

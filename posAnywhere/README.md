@@ -127,7 +127,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Expected: **24 passed**.
+Expected: **29 passed**.
 
 ---
 

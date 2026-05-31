@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
 
+    # Logging. LOG_LEVEL is one of DEBUG/INFO/WARNING/ERROR/CRITICAL. Set
+    # LOG_FILE to also write a rotating log file (empty = console/stdout only).
+    log_level: str = "INFO"
+    log_file: str = ""
+
     # Tell pydantic-settings to read variables from a .env file if present.
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

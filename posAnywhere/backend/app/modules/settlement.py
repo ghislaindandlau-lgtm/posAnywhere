@@ -7,6 +7,7 @@ summary (orders, delivered count, revenue).
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,7 @@ from app.models import Driver, Order, OrderStatus, Run, Settlement
 from app.schemas import SettlementOut
 
 router = APIRouter(prefix="/api", tags=["settlement"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/settlements/generate", response_model=SettlementOut)
@@ -63,6 +65,13 @@ def generate_settlement(
     settlement.orders_delivered = orders_delivered
     db.commit()
     db.refresh(settlement)
+    logger.info(
+        "settlement.generated driver_id=%s shift_date=%s cash_total=%.2f orders=%s",
+        driver_id,
+        shift_date,
+        cash_total,
+        orders_delivered,
+    )
     return settlement
 
 

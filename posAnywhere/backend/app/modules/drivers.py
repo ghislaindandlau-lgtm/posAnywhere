@@ -8,6 +8,8 @@ fanned out to the dispatch map and to every active order on the driver's run
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.realtime import DISPATCH_CHANNEL, manager, order_channel
 from app.schemas import DriverLocationIn, DriverOut
 
 router = APIRouter(prefix="/api/drivers", tags=["drivers"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[DriverOut])
@@ -37,6 +40,7 @@ def set_driver_status(
     driver.status = status
     db.commit()
     db.refresh(driver)
+    logger.info("driver.status_change id=%s status=%s", driver.id, status.value)
     return driver
 
 
@@ -99,15 +103,22 @@ async def driver_gps(websocket: WebSocket, driver_id: int) -> None:
             await websocket.close(code=4404)  # custom: driver not found
             return
 
+        logger.info("driver.gps.connect driver_id=%s", driver_id)
         while True:
             # Expect JSON like {"lat": 52.23, "lng": 21.01}.
             data = await websocket.receive_json()
             driver.last_lat = float(data["lat"])
             driver.last_lng = float(data["lng"])
             db.commit()
+            logger.debug(
+                "driver.gps.ping driver_id=%s lat=%s lng=%s",
+                driver_id,
+                driver.last_lat,
+                driver.last_lng,
+            )
             await _broadcast_driver_position(driver, db)
     except WebSocketDisconnect:
         # Normal client disconnect — nothing to clean up beyond the session.
-        pass
+        logger.info("driver.gps.disconnect driver_id=%s", driver_id)
     finally:
         db.close()

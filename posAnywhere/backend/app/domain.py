@@ -6,10 +6,14 @@ without importing each other (which would create a circular import).
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models import Order, OrderStatus, StatusEvent
 from app.realtime import DISPATCH_CHANNEL, manager, order_channel
+
+logger = logging.getLogger(__name__)
 
 
 def record_status(db: Session, order: Order, status: OrderStatus) -> None:
@@ -20,6 +24,7 @@ def record_status(db: Session, order: Order, status: OrderStatus) -> None:
     """
     order.status = status
     db.add(StatusEvent(order_id=order.id, status=status))
+    logger.info("order.status_change order_id=%s status=%s", order.id, status.value)
 
 
 def build_tracking_payload(order: Order) -> dict:
@@ -45,6 +50,7 @@ def build_tracking_payload(order: Order) -> dict:
 async def publish_order_update(order: Order) -> None:
     """Push an order update to its tracking channel and the dispatch map."""
     payload = build_tracking_payload(order)
+    logger.debug("order.broadcast order_id=%s status=%s", order.id, order.status.value)
     # Customer tracking page (subscribed by tracking token).
     await manager.broadcast(order_channel(order.tracking_token), payload)
     # Staff dispatch map (fleet-wide channel) gets an order-scoped event too.

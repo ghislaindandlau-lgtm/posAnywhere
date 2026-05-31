@@ -13,6 +13,7 @@ point-in-polygon), avoiding any external Maps API dependency for local runs.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from math import ceil
 
@@ -35,6 +36,7 @@ from app.models import (
 from app.schemas import DispatchResult, QuoteRequest, QuoteResponse
 
 router = APIRouter(prefix="/api/dispatch", tags=["dispatch"])
+logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------
@@ -146,6 +148,12 @@ async def dispatch_pending(db: Session) -> DispatchResult:
         db.refresh(order)
         await publish_order_update(order)
 
+    logger.info(
+        "dispatch.run pending=%s runs_created=%s orders_assigned=%s",
+        len(pending),
+        runs_created,
+        orders_assigned,
+    )
     return DispatchResult(
         runs_created=runs_created,
         orders_assigned=orders_assigned,
