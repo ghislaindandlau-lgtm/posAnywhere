@@ -13,9 +13,22 @@
 </head>
 <body class="bg-slate-100 text-slate-800">
   <!-- Top bar -->
-  <header class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+  <header class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
     <h1 class="text-xl font-semibold">posAnywhere.io <span class="text-slate-400 font-normal">POS & Dispatch Console</span></h1>
-    <div id="summary" class="text-sm text-slate-300">loading…</div>
+    <div class="flex items-center gap-4 flex-wrap">
+      <div id="summary" class="text-sm text-slate-300">loading…</div>
+      <!-- Auth: logged-out form vs logged-in identity (US-1.1 login, US-3.1 register, US-3.2 identity). -->
+      <div id="authBox" class="flex items-center gap-2 text-sm">
+        <input id="authEmail" placeholder="email" class="text-slate-800 rounded px-2 py-1 w-36" />
+        <input id="authPass" type="password" placeholder="password" class="text-slate-800 rounded px-2 py-1 w-28" />
+        <button id="loginBtn" class="bg-emerald-600 hover:bg-emerald-700 rounded px-3 py-1">Login</button>
+        <button id="registerBtn" class="bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Register</button>
+      </div>
+      <div id="userBox" class="hidden items-center gap-3 text-sm">
+        <span id="userLabel" class="text-slate-200"></span>
+        <button id="logoutBtn" class="bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Logout</button>
+      </div>
+    </div>
   </header>
 
   <main class="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -99,8 +112,37 @@
 
     <!-- BOTTOM: Orders board (full width) -->
     <section class="bg-white rounded-xl shadow p-5 lg:col-span-3">
-      <h2 class="font-semibold text-lg mb-3">Orders</h2>
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h2 class="font-semibold text-lg">Orders</h2>
+        <!-- US-1.6: filter the board by location and status. -->
+        <div class="flex items-center gap-2 text-sm">
+          <select id="filterLocation" class="border rounded-lg p-1"><option value="">All locations</option></select>
+          <select id="filterStatus" class="border rounded-lg p-1">
+            <option value="">All statuses</option>
+            <option value="new">new</option>
+            <option value="accepted">accepted</option>
+            <option value="preparing">preparing</option>
+            <option value="assigned">assigned</option>
+            <option value="on_the_way">on_the_way</option>
+            <option value="delivered">delivered</option>
+            <option value="cancelled">cancelled</option>
+          </select>
+        </div>
+      </div>
       <div id="orders" class="overflow-x-auto"></div>
+    </section>
+
+    <!-- Settlements (full width) — US-2.4 end-of-shift cash reconciliation. -->
+    <section class="bg-white rounded-xl shadow p-5 lg:col-span-3 space-y-3">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <h2 class="font-semibold text-lg">Settlements</h2>
+        <div class="flex items-center gap-2 text-sm">
+          <select id="settleDriver" class="border rounded-lg p-1"></select>
+          <input id="settleDate" type="date" class="border rounded-lg p-1" />
+          <button id="settleBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1">Generate</button>
+        </div>
+      </div>
+      <div id="settlements" class="overflow-x-auto"></div>
     </section>
   </main>
 
@@ -108,7 +150,16 @@
 // ---------------------------------------------------------------------------
 // Tiny API helper. The backend serves this page, so relative URLs work.
 // ---------------------------------------------------------------------------
-const api = (path, opts) => fetch(path, opts).then(r => r.json());
+// Auth: a JWT (when logged in) is attached to every request so the backend can
+// attribute actions to the user (US-1.1, US-6.3). RBAC is not yet enforced.
+let authToken = localStorage.getItem('pa_token') || null;
+function authHeaders(extra = {}) {
+  return authToken ? { ...extra, Authorization: 'Bearer ' + authToken } : extra;
+}
+function authFetch(path, opts = {}) {
+  return fetch(path, { ...opts, headers: authHeaders(opts.headers || {}) });
+}
+const api = (path, opts = {}) => authFetch(path, opts).then(r => r.json());
 
 let locations = [];          // cached /api/locations
 let selectedDriverId = null; // driver chosen for the GPS simulator
@@ -121,9 +172,17 @@ async function init() {
   locations = await api('/api/locations');
   const sel = document.getElementById('locationSelect');
   sel.innerHTML = locations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+  // US-1.6: populate the order-filter location dropdown.
+  document.getElementById('filterLocation').insertAdjacentHTML('beforeend',
+    locations.map(l => `<option value="${l.id}">${l.name}</option>`).join(''));
+  document.getElementById('filterLocation').onchange = loadOrders;
+  document.getElementById('filterStatus').onchange = loadOrders;
+  // Default the settlement shift date to today (US-2.4).
+  document.getElementById('settleDate').value = new Date().toISOString().slice(0, 10);
 
   initMap();
-  await Promise.all([loadDrivers(), loadOrders(), loadSummary()]);
+  await Promise.all([loadDrivers(), loadOrders(), loadSummary(), loadSettlements()]);
+  refreshAuthUI();
   connectDispatchSocket();
 }
 
@@ -182,10 +241,16 @@ async function loadDrivers() {
   const drivers = await api('/api/drivers');
   const box = document.getElementById('drivers');
   box.innerHTML = drivers.map(d => `
-    <button data-id="${d.id}" class="driver-chip border rounded-full px-3 py-1
+    <div class="border rounded-lg p-2 flex items-center gap-2
       ${d.status === 'available' ? 'bg-emerald-50 border-emerald-300' : d.status === 'on_run' ? 'bg-amber-50 border-amber-300' : 'bg-slate-50'}">
-      ${d.name} · <span class="text-xs text-slate-500">${d.status}</span>
-    </button>`).join('');
+      <button data-id="${d.id}" class="driver-chip font-medium">
+        ${d.name} · <span class="text-xs text-slate-500">${d.status}</span>
+      </button>
+      <span class="flex gap-1">
+        <button data-id="${d.id}" data-status="available" class="dstatus text-xs bg-emerald-600 text-white rounded px-2 py-0.5">On</button>
+        <button data-id="${d.id}" data-status="offline" class="dstatus text-xs bg-slate-500 text-white rounded px-2 py-0.5">Off</button>
+      </span>
+    </div>`).join('');
 
   box.querySelectorAll('.driver-chip').forEach(btn => {
     btn.onclick = () => {
@@ -194,6 +259,17 @@ async function loadDrivers() {
       btn.classList.add('ring', 'ring-indigo-400');
     };
   });
+  // US-2.3 / US-4.2: set a driver's availability (clock in -> available, out -> offline).
+  box.querySelectorAll('.dstatus').forEach(btn => {
+    btn.onclick = async () => {
+      await authFetch(`/api/drivers/${btn.dataset.id}/status?status=${btn.dataset.status}`, { method: 'POST' });
+      loadDrivers();
+    };
+  });
+
+  // US-2.4: keep the settlement driver picker in sync with the fleet.
+  const sd = document.getElementById('settleDriver');
+  if (sd) sd.innerHTML = drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
 
   // Place/refresh driver markers on the map.
   drivers.forEach(d => {
@@ -210,7 +286,14 @@ async function loadDrivers() {
 // ---------------------------------------------------------------------------
 const STATUS_FLOW = ['accepted', 'preparing', 'assigned', 'on_the_way', 'delivered'];
 async function loadOrders() {
-  const orders = await api('/api/orders');
+  // US-1.6: apply the location/status filters when querying the board.
+  const params = new URLSearchParams();
+  const fl = document.getElementById('filterLocation').value;
+  const fs = document.getElementById('filterStatus').value;
+  if (fl) params.set('location_id', fl);
+  if (fs) params.set('status', fs);
+  const qs = params.toString();
+  const orders = await api('/api/orders' + (qs ? '?' + qs : ''));
   const el = document.getElementById('orders');
   if (!orders.length) { el.innerHTML = '<p class="text-slate-500 text-sm">No orders yet.</p>'; return; }
 
@@ -237,11 +320,11 @@ async function loadOrders() {
     </table>`;
 
   el.querySelectorAll('.adv').forEach(b => b.onclick = async () => {
-    await fetch(`/api/orders/${b.dataset.id}/status?status=${b.dataset.next}`, { method: 'POST' });
+    await authFetch(`/api/orders/${b.dataset.id}/status?status=${b.dataset.next}`, { method: 'POST' });
     refresh();
   });
   el.querySelectorAll('.deliver').forEach(b => b.onclick = async () => {
-    await fetch(`/api/orders/${b.dataset.id}/deliver`, { method: 'POST' });
+    await authFetch(`/api/orders/${b.dataset.id}/deliver`, { method: 'POST' });
     refresh();
   });
 }
@@ -252,7 +335,73 @@ async function loadSummary() {
     `${s.total_orders} orders · ${s.delivered} delivered · revenue ${s.revenue}`;
 }
 
-function refresh() { loadOrders(); loadDrivers(); loadSummary(); }
+function refresh() { loadOrders(); loadDrivers(); loadSummary(); loadSettlements(); }
+
+// ---------------------------------------------------------------------------
+// Settlements (US-2.4) — reconcile a driver's shift cash, then list results.
+// ---------------------------------------------------------------------------
+async function loadSettlements() {
+  const rows = await api('/api/settlements');
+  const el = document.getElementById('settlements');
+  if (!rows.length) { el.innerHTML = '<p class="text-slate-500 text-sm">No settlements yet.</p>'; return; }
+  el.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Driver</th><th>Shift date</th><th>Orders</th><th>Cash total</th></tr></thead>
+      <tbody>${rows.map(s => `<tr class="border-b"><td class="py-2">#${s.driver_id}</td><td>${s.shift_date}</td><td>${s.orders_delivered}</td><td>${s.cash_total.toFixed(2)}</td></tr>`).join('')}</tbody>
+    </table>`;
+}
+document.getElementById('settleBtn').onclick = async () => {
+  const driverId = document.getElementById('settleDriver').value;
+  const date = document.getElementById('settleDate').value;
+  if (!driverId || !date) { alert('Pick a driver and a shift date.'); return; }
+  await api(`/api/settlements/generate?driver_id=${driverId}&shift_date=${date}`, { method: 'POST' });
+  loadSettlements();
+};
+
+// ---------------------------------------------------------------------------
+// Auth UI (US-1.1 login, US-3.1 register, US-3.2 identity).
+// ---------------------------------------------------------------------------
+async function refreshAuthUI() {
+  const authBox = document.getElementById('authBox');
+  const userBox = document.getElementById('userBox');
+  if (!authToken) {
+    authBox.classList.remove('hidden'); authBox.classList.add('flex');
+    userBox.classList.add('hidden'); userBox.classList.remove('flex');
+    return;
+  }
+  const res = await authFetch('/api/auth/me');
+  if (!res.ok) { authToken = null; localStorage.removeItem('pa_token'); return refreshAuthUI(); }
+  const me = await res.json();
+  document.getElementById('userLabel').textContent = `${me.email} (${me.role})`;
+  authBox.classList.add('hidden'); authBox.classList.remove('flex');
+  userBox.classList.remove('hidden'); userBox.classList.add('flex');
+}
+document.getElementById('loginBtn').onclick = async () => {
+  const form = new URLSearchParams();
+  form.set('username', document.getElementById('authEmail').value);
+  form.set('password', document.getElementById('authPass').value);
+  const res = await fetch('/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form,
+  });
+  if (!res.ok) { alert('Login failed — check your email/password.'); return; }
+  authToken = (await res.json()).access_token;
+  localStorage.setItem('pa_token', authToken);
+  refreshAuthUI();
+};
+document.getElementById('registerBtn').onclick = async () => {
+  const res = await fetch('/api/auth/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: document.getElementById('authEmail').value,
+      password: document.getElementById('authPass').value,
+    }),
+  });
+  if (!res.ok) { alert('Registration failed (email may already exist, or password < 8 chars).'); return; }
+  alert('Registered — you can now log in.');
+};
+document.getElementById('logoutBtn').onclick = () => {
+  authToken = null; localStorage.removeItem('pa_token'); refreshAuthUI();
+};
 
 // ---------------------------------------------------------------------------
 // Quote + place order actions.
