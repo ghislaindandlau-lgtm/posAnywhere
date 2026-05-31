@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>posAnywhere.io — POS & Dispatch Console</title>
+  <!-- TailwindCSS via CDN keeps the frontend build-free and instantly runnable. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet (open-source maps) for the live dispatch map. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style> #map { height: 380px; border-radius: 0.75rem; } </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <!-- Top bar -->
+  <header class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+    <h1 class="text-xl font-semibold">posAnywhere.io <span class="text-slate-400 font-normal">POS & Dispatch Console</span></h1>
+    <div id="summary" class="text-sm text-slate-300">loading…</div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- LEFT: New order form -->
+    <section class="bg-white rounded-xl shadow p-5 space-y-4">
+      <h2 class="font-semibold text-lg">New Order</h2>
+
+      <label class="block text-sm">Location
+        <select id="locationSelect" class="mt-1 w-full border rounded-lg p-2"></select>
+      </label>
+
+      <label class="block text-sm">Channel
+        <select id="channel" class="mt-1 w-full border rounded-lg p-2">
+          <option value="phone">Phone (Caller ID)</option>
+          <option value="online_store">Online Store</option>
+          <option value="portal">Delivery Portal</option>
+          <option value="dine_in">Dine-in</option>
+        </select>
+      </label>
+
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block text-sm">Phone
+          <input id="phone" class="mt-1 w-full border rounded-lg p-2" value="+48500999888" />
+        </label>
+        <label class="block text-sm">Customer name
+          <input id="custName" class="mt-1 w-full border rounded-lg p-2" value="New Customer" />
+        </label>
+      </div>
+
+      <label class="block text-sm">Delivery address
+        <input id="address" class="mt-1 w-full border rounded-lg p-2" value="ul. Próżna 9" />
+      </label>
+
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block text-sm">Latitude
+          <input id="lat" type="number" step="0.0001" class="mt-1 w-full border rounded-lg p-2" value="52.2305" />
+        </label>
+        <label class="block text-sm">Longitude
+          <input id="lng" type="number" step="0.0001" class="mt-1 w-full border rounded-lg p-2" value="21.0100" />
+        </label>
+      </div>
+      <p class="text-xs text-slate-500">Tip: click the map to set the delivery coordinates.</p>
+
+      <!-- Simple single-line item entry for the demo. -->
+      <div class="grid grid-cols-3 gap-3">
+        <label class="block text-sm col-span-1">Item
+          <input id="itemName" class="mt-1 w-full border rounded-lg p-2" value="Margherita" />
+        </label>
+        <label class="block text-sm">Qty
+          <input id="itemQty" type="number" class="mt-1 w-full border rounded-lg p-2" value="1" />
+        </label>
+        <label class="block text-sm">Price
+          <input id="itemPrice" type="number" step="0.01" class="mt-1 w-full border rounded-lg p-2" value="32" />
+        </label>
+      </div>
+
+      <div id="quoteBox" class="text-sm bg-slate-50 border rounded-lg p-3 hidden"></div>
+
+      <div class="flex gap-3">
+        <button id="quoteBtn" class="flex-1 bg-slate-200 hover:bg-slate-300 rounded-lg py-2 font-medium">Get quote</button>
+        <button id="placeBtn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2 font-medium">Place order</button>
+      </div>
+    </section>
+
+    <!-- MIDDLE: Live dispatch map -->
+    <section class="bg-white rounded-xl shadow p-5 space-y-3 lg:col-span-2">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold text-lg">Live Dispatch Map</h2>
+        <button id="dispatchBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Run dispatch</button>
+      </div>
+      <div id="map"></div>
+
+      <!-- Drivers + GPS simulator -->
+      <div>
+        <h3 class="font-medium text-sm text-slate-600 mb-2">Drivers</h3>
+        <div id="drivers" class="flex flex-wrap gap-2 text-sm"></div>
+        <p class="text-xs text-slate-500 mt-2">Pick a driver, then click the map to stream a GPS ping for them.</p>
+      </div>
+    </section>
+
+    <!-- BOTTOM: Orders board (full width) -->
+    <section class="bg-white rounded-xl shadow p-5 lg:col-span-3">
+      <h2 class="font-semibold text-lg mb-3">Orders</h2>
+      <div id="orders" class="overflow-x-auto"></div>
+    </section>
+  </main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Tiny API helper. The backend serves this page, so relative URLs work.
+// ---------------------------------------------------------------------------
+const api = (path, opts) => fetch(path, opts).then(r => r.json());
+
+let locations = [];          // cached /api/locations
+let selectedDriverId = null; // driver chosen for the GPS simulator
+let map, driverMarkers = {}, restaurantMarker, destMarker;
+
+// ---------------------------------------------------------------------------
+// Initial load: locations, map, drivers, orders, summary + dispatch WebSocket.
+// ---------------------------------------------------------------------------
+async function init() {
+  locations = await api('/api/locations');
+  const sel = document.getElementById('locationSelect');
+  sel.innerHTML = locations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+
+  initMap();
+  await Promise.all([loadDrivers(), loadOrders(), loadSummary()]);
+  connectDispatchSocket();
+}
+
+function currentLocation() {
+  const id = parseInt(document.getElementById('locationSelect').value);
+  return locations.find(l => l.id === id) || locations[0];
+}
+
+// Build the Leaflet map centred on the selected restaurant.
+function initMap() {
+  const loc = currentLocation();
+  map = L.map('map').setView([loc.lat, loc.lng], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  restaurantMarker = L.marker([loc.lat, loc.lng], { title: 'Restaurant' })
+    .addTo(map).bindPopup('🍕 ' + loc.name);
+
+  // Draw delivery zones as polygons.
+  loc.zones.forEach(z => {
+    L.polygon(z.polygon, { color: '#6366f1', weight: 1, fillOpacity: 0.05 })
+      .addTo(map).bindPopup(`${z.name} — fee ${z.fee}`);
+  });
+
+  // Clicking the map sets the delivery coordinates AND, if a driver is
+  // selected, streams a GPS ping for that driver (simulator).
+  map.on('click', (e) => {
+    document.getElementById('lat').value = e.latlng.lat.toFixed(4);
+    document.getElementById('lng').value = e.latlng.lng.toFixed(4);
+    if (destMarker) map.removeLayer(destMarker);
+    destMarker = L.marker([e.latlng.lat, e.latlng.lng], { opacity: 0.7 }).addTo(map).bindPopup('Delivery point');
+    if (selectedDriverId) sendGps(selectedDriverId, e.latlng.lat, e.latlng.lng);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Drivers panel + GPS simulator (one WebSocket per driver, opened lazily).
+// ---------------------------------------------------------------------------
+const driverSockets = {};
+function gpsSocket(driverId) {
+  if (driverSockets[driverId]) return driverSockets[driverId];
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/drivers/${driverId}/gps`);
+  driverSockets[driverId] = ws;
+  return ws;
+}
+function sendGps(driverId, lat, lng) {
+  const ws = gpsSocket(driverId);
+  const payload = JSON.stringify({ lat, lng });
+  if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+  else ws.addEventListener('open', () => ws.send(payload), { once: true });
+}
+
+async function loadDrivers() {
+  const drivers = await api('/api/drivers');
+  const box = document.getElementById('drivers');
+  box.innerHTML = drivers.map(d => `
+    <button data-id="${d.id}" class="driver-chip border rounded-full px-3 py-1
+      ${d.status === 'available' ? 'bg-emerald-50 border-emerald-300' : d.status === 'on_run' ? 'bg-amber-50 border-amber-300' : 'bg-slate-50'}">
+      ${d.name} · <span class="text-xs text-slate-500">${d.status}</span>
+    </button>`).join('');
+
+  box.querySelectorAll('.driver-chip').forEach(btn => {
+    btn.onclick = () => {
+      selectedDriverId = parseInt(btn.dataset.id);
+      box.querySelectorAll('.driver-chip').forEach(b => b.classList.remove('ring', 'ring-indigo-400'));
+      btn.classList.add('ring', 'ring-indigo-400');
+    };
+  });
+
+  // Place/refresh driver markers on the map.
+  drivers.forEach(d => {
+    if (d.last_lat == null) return;
+    if (driverMarkers[d.id]) driverMarkers[d.id].setLatLng([d.last_lat, d.last_lng]);
+    else driverMarkers[d.id] = L.circleMarker([d.last_lat, d.last_lng],
+      { radius: 8, color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.9 })
+      .addTo(map).bindPopup('🛵 ' + d.name);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Orders board with status actions.
+// ---------------------------------------------------------------------------
+const STATUS_FLOW = ['accepted', 'preparing', 'assigned', 'on_the_way', 'delivered'];
+async function loadOrders() {
+  const orders = await api('/api/orders');
+  const el = document.getElementById('orders');
+  if (!orders.length) { el.innerHTML = '<p class="text-slate-500 text-sm">No orders yet.</p>'; return; }
+
+  el.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b">
+        <tr><th class="py-2">#</th><th>Status</th><th>Total</th><th>ETA</th><th>Track</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        ${orders.map(o => `
+          <tr class="border-b">
+            <td class="py-2 font-medium">${o.id}</td>
+            <td><span class="px-2 py-0.5 rounded-full bg-slate-100">${o.status}</span></td>
+            <td>${o.total.toFixed(2)}</td>
+            <td>${o.eta_minutes ?? '-'} min</td>
+            <td><a class="text-indigo-600 underline" target="_blank" href="/track?token=${o.tracking_token}">open</a></td>
+            <td class="space-x-1">
+              <button data-id="${o.id}" data-next="preparing" class="adv bg-slate-200 rounded px-2 py-1">Prepare</button>
+              <button data-id="${o.id}" data-next="on_the_way" class="adv bg-blue-100 rounded px-2 py-1">On the way</button>
+              <button data-id="${o.id}" class="deliver bg-emerald-600 text-white rounded px-2 py-1">Deliver</button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  el.querySelectorAll('.adv').forEach(b => b.onclick = async () => {
+    await fetch(`/api/orders/${b.dataset.id}/status?status=${b.dataset.next}`, { method: 'POST' });
+    refresh();
+  });
+  el.querySelectorAll('.deliver').forEach(b => b.onclick = async () => {
+    await fetch(`/api/orders/${b.dataset.id}/deliver`, { method: 'POST' });
+    refresh();
+  });
+}
+
+async function loadSummary() {
+  const s = await api('/api/reports/summary');
+  document.getElementById('summary').textContent =
+    `${s.total_orders} orders · ${s.delivered} delivered · revenue ${s.revenue}`;
+}
+
+function refresh() { loadOrders(); loadDrivers(); loadSummary(); }
+
+// ---------------------------------------------------------------------------
+// Quote + place order actions.
+// ---------------------------------------------------------------------------
+document.getElementById('quoteBtn').onclick = async () => {
+  const body = {
+    location_id: currentLocation().id,
+    delivery_lat: parseFloat(document.getElementById('lat').value),
+    delivery_lng: parseFloat(document.getElementById('lng').value),
+  };
+  const q = await api('/api/dispatch/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const box = document.getElementById('quoteBox');
+  box.classList.remove('hidden');
+  box.innerHTML = q.deliverable
+    ? `Zone <b>${q.zone_name}</b> · fee <b>${q.delivery_fee}</b> · ETA <b>${q.eta_minutes} min</b>`
+    : `<span class="text-red-600">Outside delivery zones</span> · ETA ${q.eta_minutes} min`;
+};
+
+document.getElementById('placeBtn').onclick = async () => {
+  const body = {
+    location_id: currentLocation().id,
+    channel: document.getElementById('channel').value,
+    customer_phone: document.getElementById('phone').value,
+    customer_name: document.getElementById('custName').value,
+    delivery_address: document.getElementById('address').value,
+    delivery_lat: parseFloat(document.getElementById('lat').value),
+    delivery_lng: parseFloat(document.getElementById('lng').value),
+    items: [{
+      name: document.getElementById('itemName').value,
+      qty: parseInt(document.getElementById('itemQty').value),
+      price: parseFloat(document.getElementById('itemPrice').value),
+    }],
+  };
+  await api('/api/orders', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  refresh();
+};
+
+document.getElementById('dispatchBtn').onclick = async () => {
+  const r = await api('/api/dispatch/run', { method: 'POST' });
+  alert(r.message);
+  refresh();
+};
+
+// ---------------------------------------------------------------------------
+// Dispatch WebSocket: live driver positions + order updates push to the map.
+// ---------------------------------------------------------------------------
+function connectDispatchSocket() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/dispatch/ws`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'driver_position' && msg.lat != null) {
+      if (driverMarkers[msg.driver_id]) driverMarkers[msg.driver_id].setLatLng([msg.lat, msg.lng]);
+      else driverMarkers[msg.driver_id] = L.circleMarker([msg.lat, msg.lng],
+        { radius: 8, color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.9 }).addTo(map).bindPopup('🛵 ' + msg.name);
+    }
+    if (msg.type === 'order_update') refresh();
+  };
+  // Reconnect if the socket drops (e.g. server restart during development).
+  ws.onclose = () => setTimeout(connectDispatchSocket, 2000);
+}
+
+init();
+</script>
+</body>
+</html>

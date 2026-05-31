@@ -1,0 +1,12 @@
+# Local environment + secrets
+.env
+
+# SQLite database files created at runtime
+*.db
+*.db-journal
+
+# Python caches / virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/

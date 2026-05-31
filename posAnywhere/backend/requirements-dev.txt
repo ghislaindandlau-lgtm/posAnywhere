@@ -1,0 +1,9 @@
+# ---------------------------------------------------------------------------
+# Development/test-only dependencies (kept separate from the runtime set).
+# Install alongside the app with:  pip install -r requirements-dev.txt
+# ---------------------------------------------------------------------------
+
+-r requirements.txt        # pull in the runtime dependencies too
+
+pytest==8.3.3              # test runner
+httpx==0.27.2             # required by FastAPI's TestClient for HTTP + WS calls

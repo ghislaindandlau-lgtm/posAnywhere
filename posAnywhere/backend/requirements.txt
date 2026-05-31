@@ -1,0 +1,13 @@
+# ---------------------------------------------------------------------------
+# Python dependencies for the posAnywhere.io modular-monolith backend.
+# Install with:  pip install -r requirements.txt
+# Pinned to known-good versions for reproducible local + cloud builds.
+# ---------------------------------------------------------------------------
+
+fastapi==0.115.0           # Web framework (REST + WebSocket) used by every module
+uvicorn[standard]==0.30.6  # ASGI server that runs the FastAPI app (incl. websockets)
+SQLAlchemy==2.0.34         # ORM used by the database/models layer
+pydantic==2.9.2            # Request/response validation schemas
+pydantic-settings==2.5.2   # Loads typed configuration from environment variables
+python-dotenv==1.0.1       # Reads the local .env file during development
+psycopg2-binary==2.9.9     # PostgreSQL driver (the runtime database)

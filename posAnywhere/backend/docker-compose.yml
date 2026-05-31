@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Optional local stack: runs the backend together with PostgreSQL.
+# Use this when you want to exercise the Postgres code path instead of SQLite.
+# Start with:  docker compose up --build
+# ---------------------------------------------------------------------------
+
+services:
+  # PostgreSQL operational database (architecture §3 data tier).
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: posanywhere
+      POSTGRES_PASSWORD: posanywhere
+      POSTGRES_DB: posanywhere
+    ports:
+      - "5432:5432"
+    volumes:
+      - posanywhere_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U posanywhere"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # The FastAPI application.
+  api:
+    build: .
+    environment:
+      # Point the app at the Postgres service above.
+      DATABASE_URL: postgresql+psycopg2://posanywhere:posanywhere@db:5432/posanywhere
+      CORS_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  posanywhere_pgdata:

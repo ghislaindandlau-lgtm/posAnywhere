@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Track your order — posAnywhere.io</title>
+  <!-- App-free tracking: a light web page, no install required (architecture §8 A4). -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style> #map { height: 300px; border-radius: 0.75rem; } </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <div class="max-w-md mx-auto p-4 space-y-4">
+    <header class="text-center pt-4">
+      <h1 class="text-2xl font-bold">Track your order</h1>
+      <p class="text-slate-500 text-sm">Live status · no app needed</p>
+    </header>
+
+    <div id="card" class="bg-white rounded-xl shadow p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500">Order</p>
+          <p id="orderId" class="text-lg font-semibold">—</p>
+        </div>
+        <div class="text-right">
+          <p class="text-xs text-slate-500">ETA</p>
+          <p id="eta" class="text-lg font-semibold">—</p>
+        </div>
+      </div>
+
+      <div id="statusBadge" class="text-center text-white font-medium rounded-lg py-2 bg-slate-400">loading…</div>
+
+      <div id="map"></div>
+
+      <div>
+        <h2 class="text-sm font-medium text-slate-600 mb-2">Progress</h2>
+        <ol id="timeline" class="space-y-1 text-sm"></ol>
+      </div>
+    </div>
+
+    <p id="error" class="text-center text-red-600 hidden">Tracking link not found.</p>
+  </div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Read the tracking token from the URL (?token=...). This is the only key the
+// customer needs — no login (architecture §8 A4).
+// ---------------------------------------------------------------------------
+const token = new URLSearchParams(location.search).get('token');
+
+let map, restaurantMarker, driverMarker;
+
+// Map raw status -> friendly label + colour for the status badge.
+const STATUS_UI = {
+  new:        ['Order received',  'bg-slate-500'],
+  accepted:   ['Order accepted',  'bg-slate-600'],
+  preparing:  ['Being prepared',  'bg-amber-500'],
+  assigned:   ['Driver assigned', 'bg-blue-500'],
+  on_the_way: ['On the way',      'bg-indigo-600'],
+  delivered:  ['Delivered',       'bg-emerald-600'],
+  cancelled:  ['Cancelled',       'bg-red-600'],
+};
+
+function render(view) {
+  document.getElementById('orderId').textContent = '#' + view.order_id;
+  document.getElementById('eta').textContent = view.eta_minutes != null ? view.eta_minutes + ' min' : '—';
+
+  const [label, colour] = STATUS_UI[view.status] || [view.status, 'bg-slate-500'];
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = label;
+  badge.className = `text-center text-white font-medium rounded-lg py-2 ${colour}`;
+
+  // Build the map the first time we have restaurant coordinates.
+  if (!map) {
+    map = L.map('map').setView([view.restaurant_lat, view.restaurant_lng], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    restaurantMarker = L.marker([view.restaurant_lat, view.restaurant_lng]).addTo(map).bindPopup('🍕 ' + view.restaurant_name);
+  }
+
+  // Show/update the live driver position when available.
+  if (view.driver_lat != null) {
+    if (driverMarker) driverMarker.setLatLng([view.driver_lat, view.driver_lng]);
+    else driverMarker = L.circleMarker([view.driver_lat, view.driver_lng],
+      { radius: 9, color: '#4f46e5', fillColor: '#4f46e5', fillOpacity: 0.9 }).addTo(map).bindPopup('🛵 ' + (view.driver_name || 'Driver'));
+    map.panTo([view.driver_lat, view.driver_lng]);
+  }
+
+  // Render the status history timeline if present.
+  if (view.history) {
+    document.getElementById('timeline').innerHTML = view.history.map(h => {
+      const [lbl] = STATUS_UI[h.status] || [h.status];
+      const t = new Date(h.ts).toLocaleTimeString();
+      return `<li class="flex justify-between"><span>• ${lbl}</span><span class="text-slate-400">${t}</span></li>`;
+    }).join('');
+  }
+}
+
+// Initial snapshot via REST, then live updates via WebSocket.
+async function start() {
+  if (!token) { showError(); return; }
+  const res = await fetch('/api/tracking/' + token);
+  if (!res.ok) { showError(); return; }
+  render(await res.json());
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/tracking/${token}/ws`);
+  ws.onmessage = (ev) => render(JSON.parse(ev.data));
+  ws.onclose = () => setTimeout(start, 3000); // reconnect on drop
+}
+
+function showError() {
+  document.getElementById('card').classList.add('hidden');
+  document.getElementById('error').classList.remove('hidden');
+}
+
+start();
+</script>
+</body>
+</html>
