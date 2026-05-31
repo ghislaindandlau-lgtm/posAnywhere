@@ -32,7 +32,7 @@ posAnywhere.io is a **POS + delivery-orchestration platform** for restaurants op
 | **Real-time latency** | In-process WebSocket fan-out (no network hop) |
 | **Integrability**     | Clean REST API + module boundaries ready to split into services |
 | **Portability** | Stateless app reads `$PORT`/`$DATABASE_URL`; Docker image provided |
-| **Testability** | 29 pytest cases against an isolated DB |
+| **Testability** | 33 pytest cases against an isolated DB |
 
 > Aspirational targets from the product brief (350 orders/min burst, 20M+ lifetime orders, HA) are **design goals for §12**, not characteristics of this single-process build.
 
@@ -275,9 +275,9 @@ The dispatch engine is the core differentiator. It lives in `app/modules/dispatc
 ## 9. Cross-Cutting Concerns (current state)
 
 - **Security:** User authentication via `/api/auth` (bcrypt-hashed passwords + JWT bearer tokens, `app/security.py`); role field on users (`admin`/`manager`/`staff`) ready for RBAC enforcement; configurable CORS (`CORS_ORIGINS`); unguessable per-order `tracking_token` for the public tracking page; no card data stored. **Deferred:** TLS termination, per-endpoint RBAC checks, refresh tokens, PII-at-rest encryption — to be added for production (see §12).
-- **Observability:** centralised structured logging (`app/logging_config.py`): every HTTP request is logged with a correlation id (`X-Request-ID`), method, path, status and duration; every failure is documented (raised `HTTPException` -> warning with reason, validation errors -> warning, unhandled exceptions -> error with stack trace). Key business actions (auth login/register, order created, status changes, dispatch runs, driver status, settlements, WS connect/disconnect) emit audit lines. Level via `LOG_LEVEL`, optional rotating file via `LOG_FILE`; plus `GET /api/health` liveness probe. **Deferred:** metrics, distributed tracing.
+- **Observability:** centralised structured logging (`app/logging_config.py`): every HTTP request is logged with a correlation id (`X-Request-ID`), method, path, status and duration; every failure is documented (raised `HTTPException` -> warning with reason, validation errors -> warning, unhandled exceptions -> error with stack trace). Key business actions (auth login/register, order created, status changes, dispatch runs, driver status, settlements, WS connect/disconnect) emit audit lines. Every log line is enriched with the request id and the authenticated user (`user:<id>` decoded from the JWT, or `anonymous`/`invalid-token`) via `contextvars`. Output is human-readable text or one-line JSON for aggregators (`LOG_FORMAT=text|json`). Level via `LOG_LEVEL`, optional rotating file via `LOG_FILE`; plus `GET /api/health` liveness probe. **Deferred:** metrics, distributed tracing.
 - **Resilience:** DB work runs in transactions; WebSocket clients auto-reconnect; dead sockets are pruned on broadcast. **Deferred:** broker retries/dead-letter, DB read replicas.
-- **Testing:** `pytest` suite (29 tests) covering auth (register/login/JWT), request logging/failure documentation, geo, dispatch, order lifecycle, settlement, reporting and tracking (REST + WS), each against an isolated SQLite DB (test-only; the app runtime uses PostgreSQL).
+- **Testing:** `pytest` suite (33 tests) covering auth (register/login/JWT), request logging/failure documentation/JSON+user context, geo, dispatch, order lifecycle, settlement, reporting and tracking (REST + WS), each against an isolated SQLite DB (test-only; the app runtime uses PostgreSQL).
 - **Scalability:** App layer is stateless and can scale horizontally **except** the in-process realtime fan-out (single-process); see §12 for the Redis-backed swap.
 
 ---
@@ -296,7 +296,7 @@ posAnywhere/
     │   ├── geo.py           # haversine + point-in-polygon (local Maps replacement)
     │   ├── domain.py        # status transitions + realtime publish helpers
     │   ├── realtime.py      # in-process WebSocket pub/sub manager
-    │   ├── logging_config.py# structured logging setup (format, handlers, level)
+    │   ├── logging_config.py# logging setup: text/JSON formatters + request/user context
     │   ├── security.py      # password hashing + JWT + get_current_user
     │   ├── seed.py          # demo data + tracking links
     │   ├── modules/
@@ -307,7 +307,7 @@ posAnywhere/
     │   │   ├── settlement.py # settlement + reporting
     │   │   └── tracking.py   # app-free tracking (REST + WS)
     │   └── static/{pos.html, tracking.html}
-    ├── tests/               # pytest suite (29 tests)
+    ├── tests/               # pytest suite (33 tests)
     ├── requirements.txt / requirements-dev.txt
     ├── Dockerfile / docker-compose.yml / .env.example
 ```

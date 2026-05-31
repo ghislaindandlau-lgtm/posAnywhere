@@ -55,6 +55,12 @@ def test_status_transition_records_history(client, location_id):
     statuses = [h["status"] for h in tracking["history"]]
     assert "preparing" in statuses
 
+    # US-1.6: the order endpoint itself returns items + the event history.
+    assert refreshed["items"], "order should include its line items"
+    event_statuses = [e["status"] for e in refreshed["status_events"]]
+    assert "preparing" in event_statuses
+    assert "accepted" in event_statuses
+
 
 def test_deliver_frees_driver(client, location_id):
     """Delivering the only order on a run completes it and frees the driver."""

@@ -35,8 +35,10 @@ class Settings(BaseSettings):
 
     # Logging. LOG_LEVEL is one of DEBUG/INFO/WARNING/ERROR/CRITICAL. Set
     # LOG_FILE to also write a rotating log file (empty = console/stdout only).
+    # LOG_FORMAT is "text" (human-readable) or "json" (for log aggregators).
     log_level: str = "INFO"
     log_file: str = ""
+    log_format: str = "text"
 
     # Tell pydantic-settings to read variables from a .env file if present.
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

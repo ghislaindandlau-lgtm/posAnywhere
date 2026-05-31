@@ -24,12 +24,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
 from app.database import get_db, init_db
-from app.logging_config import configure_logging
+from app.logging_config import configure_logging, request_id_var, user_var
 from app.models import Location
 from app.realtime import DISPATCH_CHANNEL, manager
 from app.modules import auth, dispatch, drivers, orders, settlement, tracking
@@ -67,11 +68,47 @@ app.add_middleware(
 # Every HTTP request gets a correlation id and an audit log line; every
 # failure (HTTP error, validation error, or unhandled exception) is logged.
 # --------------------------------------------------------------------------
+def _identify_user(request: Request) -> str:
+    """Best-effort: read the user id from a Bearer token without enforcing auth.
+
+    Returns "user:<id>" for a valid token, "invalid-token" when a token is
+    present but cannot be decoded, or "anonymous" otherwise. No DB lookup is
+    performed, so this adds negligible per-request overhead.
+    """
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return "anonymous"
+    token = authorization[len("Bearer "):]
+    try:
+        payload = jwt.decode(
+            token, settings.secret_key, algorithms=[settings.jwt_algorithm]
+        )
+    except JWTError:
+        return "invalid-token"
+    subject = payload.get("sub")
+    return f"user:{subject}" if subject else "anonymous"
+
+
+def _bind_log_context(request: Request) -> str:
+    """Bind request id + user onto the logging context vars; return the id."""
+    request_id = getattr(request.state, "request_id", None) or (
+        request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    )
+    request.state.request_id = request_id
+    request_id_var.set(request_id)
+    user_var.set(getattr(request.state, "user", None) or _identify_user(request))
+    return request_id
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log every HTTP request with a correlation id, status code and duration."""
+    """Tag every request with a correlation id + user and log an audit line."""
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    user = _identify_user(request)
     request.state.request_id = request_id
+    request.state.user = user
+    request_id_var.set(request_id)
+    user_var.set(user)
     start = time.perf_counter()
 
     response = await call_next(request)
@@ -79,12 +116,11 @@ async def log_requests(request: Request, call_next):
     duration_ms = (time.perf_counter() - start) * 1000
     client = request.client.host if request.client else "-"
     logger.info(
-        "%s %s -> %s (%.1f ms) id=%s client=%s",
+        "%s %s -> %s (%.1f ms) client=%s",
         request.method,
         request.url.path,
         response.status_code,
         duration_ms,
-        request_id,
         client,
     )
     response.headers["X-Request-ID"] = request_id
@@ -94,14 +130,13 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Document raised HTTP errors (e.g. 401/404/409) with their reason."""
-    request_id = getattr(request.state, "request_id", "-")
+    request_id = _bind_log_context(request)
     logger.warning(
-        "http_error %s %s status=%s detail=%s id=%s",
+        "http_error %s %s status=%s detail=%s",
         request.method,
         request.url.path,
         exc.status_code,
         exc.detail,
-        request_id,
     )
     return JSONResponse(
         status_code=exc.status_code,
@@ -113,13 +148,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Document request validation failures (422) with the offending fields."""
-    request_id = getattr(request.state, "request_id", "-")
+    request_id = _bind_log_context(request)
     logger.warning(
-        "validation_error %s %s errors=%s id=%s",
+        "validation_error %s %s errors=%s",
         request.method,
         request.url.path,
         exc.errors(),
-        request_id,
     )
     return JSONResponse(
         status_code=422,
@@ -131,12 +165,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Document unexpected failures with a full stack trace and return 500."""
-    request_id = getattr(request.state, "request_id", "-")
+    request_id = _bind_log_context(request)
     logger.exception(
-        "unhandled_error %s %s id=%s",
+        "unhandled_error %s %s",
         request.method,
         request.url.path,
-        request_id,
     )
     return JSONResponse(
         status_code=500,

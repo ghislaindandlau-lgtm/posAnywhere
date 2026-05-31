@@ -78,6 +78,8 @@ class OrderOut(BaseModel):
     tracking_token: str
     created_at: datetime
     items: list[OrderItemOut] = []
+    # Append-only audit trail of every status transition (US-1.6).
+    status_events: list[StatusEventOut] = []
 
 
 # --------------------------------------------------------------------------
