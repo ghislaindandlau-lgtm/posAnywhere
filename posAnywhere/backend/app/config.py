@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     average_driver_speed_kmh: float = 25.0
     default_prep_minutes: int = 15
 
+    # Authentication / JWT. SECRET_KEY MUST be overridden in production with a
+    # long random value (e.g. `openssl rand -hex 32`); the default is insecure.
+    secret_key: str = "dev-insecure-change-me-please-set-SECRET_KEY"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24  # 24 hours
+
     # Tell pydantic-settings to read variables from a .env file if present.
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

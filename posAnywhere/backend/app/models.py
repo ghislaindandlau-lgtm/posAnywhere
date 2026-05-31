@@ -15,6 +15,7 @@ from datetime import datetime, date
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     Enum,
@@ -59,6 +60,14 @@ class DriverStatus(str, enum.Enum):
     OFFLINE = "offline"
     AVAILABLE = "available"
     ON_RUN = "on_run"
+
+
+class UserRole(str, enum.Enum):
+    """Authorisation roles for application users who sign in to the API."""
+
+    ADMIN = "admin"
+    MANAGER = "manager"
+    STAFF = "staff"
 
 
 # --------------------------------------------------------------------------
@@ -239,3 +248,26 @@ class Settlement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     driver: Mapped[Driver] = relationship(back_populates="settlements")
+
+
+# --------------------------------------------------------------------------
+# Authentication: application users who sign in to the POS / admin console.
+# --------------------------------------------------------------------------
+class User(Base):
+    """A user account that can authenticate against the API.
+
+    Only the bcrypt password *hash* is stored; the plaintext is never
+    persisted. `tenant_id` optionally scopes a user to one restaurant brand,
+    mirroring the Tenant -> Location hierarchy.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False, default=UserRole.STAFF)
+    tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

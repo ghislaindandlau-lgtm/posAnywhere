@@ -32,7 +32,7 @@ posAnywhere.io is a **POS + delivery-orchestration platform** for restaurants op
 | **Real-time latency** | In-process WebSocket fan-out (no network hop) |
 | **Integrability**     | Clean REST API + module boundaries ready to split into services |
 | **Portability** | Stateless app reads `$PORT`/`$DATABASE_URL`; Docker image provided |
-| **Testability** | 16 pytest cases against an isolated DB |
+| **Testability** | 24 pytest cases against an isolated DB |
 
 > Aspirational targets from the product brief (350 orders/min burst, 20M+ lifetime orders, HA) are **design goals for §12**, not characteristics of this single-process build.
 
@@ -216,11 +216,14 @@ The dispatch engine is the core differentiator. It lives in `app/modules/dispatc
     DRIVER(id, name, status, last_lat, last_lng)
     RUN(id, driver_id, started_at, completed_at)
     SETTLEMENT(id, driver_id, shift_date, cash_total, orders_delivered, created_at)
+    USER(id, email[unique], full_name, hashed_password, role,
+         tenant_id, is_active, created_at)
 
   Enums:  OrderChannel(dine_in, phone, portal, online_store)
           OrderStatus(new, accepted, preparing, assigned, on_the_way,
                       delivered, cancelled)
           DriverStatus(offline, available, on_run)
+          UserRole(admin, manager, staff)
   Note: zones use a plain JSON polygon (not PostGIS geometry).
   Cardinality:  1=one   *=many.
 ```
@@ -271,10 +274,10 @@ The dispatch engine is the core differentiator. It lives in `app/modules/dispatc
 
 ## 9. Cross-Cutting Concerns (current state)
 
-- **Security:** Configurable CORS (`CORS_ORIGINS`); unguessable per-order `tracking_token` for the public tracking page; no card data stored. **Deferred:** TLS termination, auth/RBAC for the POS, PII-at-rest encryption — to be added at the gateway/DB layer for production (see §12).
+- **Security:** User authentication via `/api/auth` (bcrypt-hashed passwords + JWT bearer tokens, `app/security.py`); role field on users (`admin`/`manager`/`staff`) ready for RBAC enforcement; configurable CORS (`CORS_ORIGINS`); unguessable per-order `tracking_token` for the public tracking page; no card data stored. **Deferred:** TLS termination, per-endpoint RBAC checks, refresh tokens, PII-at-rest encryption — to be added for production (see §12).
 - **Observability:** uvicorn request logging + `GET /api/health` liveness probe. **Deferred:** metrics, distributed tracing.
 - **Resilience:** DB work runs in transactions; WebSocket clients auto-reconnect; dead sockets are pruned on broadcast. **Deferred:** broker retries/dead-letter, DB read replicas.
-- **Testing:** `pytest` suite (16 tests) covering geo, dispatch, order lifecycle, settlement, reporting and tracking (REST + WS), each against an isolated SQLite DB (test-only; the app runtime uses PostgreSQL).
+- **Testing:** `pytest` suite (24 tests) covering auth (register/login/JWT), geo, dispatch, order lifecycle, settlement, reporting and tracking (REST + WS), each against an isolated SQLite DB (test-only; the app runtime uses PostgreSQL).
 - **Scalability:** App layer is stateless and can scale horizontally **except** the in-process realtime fan-out (single-process); see §12 for the Redis-backed swap.
 
 ---
@@ -293,21 +296,24 @@ posAnywhere/
     │   ├── geo.py           # haversine + point-in-polygon (local Maps replacement)
     │   ├── domain.py        # status transitions + realtime publish helpers
     │   ├── realtime.py      # in-process WebSocket pub/sub manager
+    │   ├── security.py      # password hashing + JWT + get_current_user
     │   ├── seed.py          # demo data + tracking links
     │   ├── modules/
+    │   │   ├── auth.py       # register / login / me (JWT)
     │   │   ├── orders.py     # §5 intake + lifecycle
     │   │   ├── dispatch.py   # §4 zone/ETA/batcher/assigner
     │   │   ├── drivers.py    # driver state + GPS WebSocket
     │   │   ├── settlement.py # settlement + reporting
     │   │   └── tracking.py   # app-free tracking (REST + WS)
     │   └── static/{pos.html, tracking.html}
-    ├── tests/               # pytest suite (16 tests)
+    ├── tests/               # pytest suite (24 tests)
     ├── requirements.txt / requirements-dev.txt
     ├── Dockerfile / docker-compose.yml / .env.example
 ```
 
 | Container (§3) | Implemented by |
 |----------------|----------------|
+| Auth | `app/modules/auth.py` + `app/security.py` |
 | POS Web | `app/static/pos.html` |
 | Tracking Page | `app/static/tracking.html` |
 | Driver GPS client | GPS simulator inside `pos.html` → `WS /api/drivers/{id}/gps` |
@@ -321,6 +327,9 @@ posAnywhere/
 ### HTTP / WS API (as implemented)
 | Method | Path | Purpose |
 |--------|------|---------|
+| POST | `/api/auth/register` | Create a user account |
+| POST | `/api/auth/login` | Email + password -> JWT access token |
+| GET | `/api/auth/me` | Current authenticated user (Bearer token) |
 | POST | `/api/orders` | Place order (prices delivery + ETA) |
 | GET | `/api/orders` | List orders (filter `location_id`, `status`) |
 | GET | `/api/orders/{id}` | Get one order |

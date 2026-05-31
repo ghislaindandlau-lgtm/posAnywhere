@@ -11,3 +11,7 @@ pydantic==2.9.2            # Request/response validation schemas
 pydantic-settings==2.5.2   # Loads typed configuration from environment variables
 python-dotenv==1.0.1       # Reads the local .env file during development
 psycopg2-binary==2.9.9     # PostgreSQL driver (the runtime database)
+passlib[bcrypt]==1.7.4     # Password hashing (bcrypt) for user authentication
+bcrypt==4.0.1              # Pinned bcrypt backend compatible with passlib 1.7.4
+python-jose[cryptography]==3.3.0  # JWT encode/decode for auth access tokens
+python-multipart==0.0.9    # Parses the OAuth2 login form (username/password)

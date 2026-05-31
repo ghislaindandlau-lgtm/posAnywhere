@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime, date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models import DriverStatus, OrderChannel, OrderStatus
+from app.models import DriverStatus, OrderChannel, OrderStatus, UserRole
 
 
 # Shared config so response schemas can be built directly from ORM objects.
@@ -153,3 +153,41 @@ class TrackingView(BaseModel):
     driver_lat: float | None
     driver_lng: float | None
     history: list[StatusEventOut] = []
+
+
+# --------------------------------------------------------------------------
+# Authentication schemas
+# --------------------------------------------------------------------------
+class UserCreate(BaseModel):
+    """Registration payload for POST /api/auth/register."""
+
+    email: str
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = None
+    role: UserRole = UserRole.STAFF
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or "." not in value.split("@")[-1]:
+            raise ValueError("Invalid email address")
+        return value
+
+
+class UserOut(BaseModel):
+    """Public, safe representation of a user (never includes the password)."""
+
+    model_config = ORM
+    id: int
+    email: str
+    full_name: str | None
+    role: UserRole
+    is_active: bool
+
+
+class Token(BaseModel):
+    """JWT access token returned by POST /api/auth/login."""
+
+    access_token: str
+    token_type: str = "bearer"

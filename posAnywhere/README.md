@@ -15,6 +15,7 @@ Tracking) plus an in-process realtime/WebSocket tier.
 
 ## Features implemented
 
+- **Authentication** — user registration + login with bcrypt-hashed passwords and JWT bearer tokens (roles: admin/manager/staff).
 - **Multi-channel order intake** — phone (Caller ID), online store, portal, dine-in.
 - **Dispatch & Routing engine** (the core differentiator):
   - **Zone Engine** — resolves a delivery address to a zone + fee via point-in-polygon.
@@ -126,7 +127,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Expected: **16 passed**.
+Expected: **24 passed**.
 
 ---
 

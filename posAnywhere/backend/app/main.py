@@ -25,7 +25,7 @@ from app.config import settings
 from app.database import get_db, init_db
 from app.models import Location
 from app.realtime import DISPATCH_CHANNEL, manager
-from app.modules import dispatch, drivers, orders, settlement, tracking
+from app.modules import auth, dispatch, drivers, orders, settlement, tracking
 
 # Absolute path to the bundled static frontend (POS + tracking pages).
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -51,6 +51,7 @@ app.add_middleware(
 )
 
 # Register each domain module's router.
+app.include_router(auth.router)
 app.include_router(orders.router)
 app.include_router(dispatch.router)
 app.include_router(drivers.router)
